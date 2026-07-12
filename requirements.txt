@@ -1,0 +1,6 @@
+Flask
+FastAPI
+uvicorn[standard]
+python-dateutil
+pydantic
+ 
