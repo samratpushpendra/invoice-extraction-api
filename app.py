@@ -80,6 +80,36 @@ def find_first_match(text, patterns):
     return None
 
 
+# Note: re.IGNORECASE on the label pattern also makes the captured
+# character class match lowercase letters, which lets a loose label
+# like "Invoice" (matched via the optional "#" in "Invoice\s*#?")
+# accidentally swallow the next plain word (e.g. "Ref" in
+# "Invoice Ref: QN-2220") instead of the real code. We guard against
+# this by requiring the captured value to contain at least one digit
+# before accepting it -- a genuine invoice/reference number always
+# has digits, a stray label word never does. If no labeled match
+# passes that check, fall back to scanning for a bare code shape
+# (e.g. "QN-2220") anywhere in the text.
+def find_invoice_no(text):
+    label_pattern = (
+        r"(?:Invoice\s*No\.?|Invoice\s*#?|Inv\.?\s*No\.?|Inv\.?|Bill\s*No\.?"
+        r"|Ref(?:erence)?\.?\s*(?:No\.?)?|Quote\s*No\.?|Quotation\s*No\.?)"
+        r"\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\-\/]*)"
+    )
+    for m in re.finditer(label_pattern, text, re.IGNORECASE):
+        candidate = m.group(1)
+        if re.search(r"\d", candidate):
+            return clean_text(candidate)
+
+    # Fallback: a bare code-shape scan, case-sensitive so it only
+    # matches genuine-looking codes (not random capitalized words).
+    for pattern in [r"\b([A-Z]{1,6}-\d{2,10})\b", r"\b([A-Z]{2,}\d{2,})\b"]:
+        m = re.search(pattern, text)
+        if m:
+            return clean_text(m.group(1))
+    return None
+
+
 @app.get("/")
 def root():
     return {"status": "ok", "message": "POST invoice_text to /extract"}
@@ -89,11 +119,7 @@ def root():
 def extract(req: ExtractRequest):
     text = req.invoice_text
 
-    invoice_no = find_first_match(text, [
-        r"(?:Invoice\s*No\.?|Invoice\s*#?|Inv\.?\s*No\.?|Inv\.?|Bill\s*No\.?)\s*[:\-]?\s*([A-Z0-9\-\/]+)",
-        r"\b([A-Z]{1,5}-\d{2,10})\b",
-        r"\b([A-Z]{2,}\d{2,})\b",
-    ])
+    invoice_no = find_invoice_no(text)
 
     vendor = find_first_match(text, [
         r"(?:Vendor|Supplier|Billed\s*From|From)\s*[:\-]?\s*(.+)",
