@@ -1,6 +1,7 @@
 Flask
-FastAPI
-uvicorn[standard]
+fastapi
+uvicorn
 python-dateutil
 pydantic
+requests
  
