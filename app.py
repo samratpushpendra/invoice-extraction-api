@@ -10,7 +10,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,   # FIXED: was True, which is invalid with allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -45,7 +45,7 @@ def parse_date_field(text):
             try:
                 dt = parser.parse(raw, dayfirst=True, fuzzy=True)
                 return dt.strftime("%Y-%m-%d")
-            except:
+            except Exception:
                 pass
     return None
 
@@ -58,7 +58,7 @@ def parse_money(raw):
     raw = raw.strip()
     try:
         return float(raw)
-    except:
+    except Exception:
         return None
 
 def find_first_match(text, patterns):
@@ -84,22 +84,18 @@ def extract(req: ExtractRequest):
 
     date = parse_date_field(text)
 
-    amount = None
     amount_patterns = [
         r"(?:Subtotal|Sub\s*Total|Subtotal Amount)\s*[:\-]?\s*(?:Rs\.?|INR)?\s*([\d,]+\.\d{2})",
         r"(?:Amount\s*Before\s*Tax|Taxable\s*Amount)\s*[:\-]?\s*(?:Rs\.?|INR)?\s*([\d,]+\.\d{2})",
     ]
     amount_raw = find_first_match(text, amount_patterns)
-    if amount_raw:
-        amount = parse_money(amount_raw)
+    amount = parse_money(amount_raw) if amount_raw else None
 
-    tax = None
     tax_patterns = [
         r"(?:GST(?:\s*\(\d+%\))?|Tax|VAT)\s*[:\-]?\s*(?:Rs\.?|INR)?\s*([\d,]+\.\d{2})",
     ]
     tax_raw = find_first_match(text, tax_patterns)
-    if tax_raw:
-        tax = parse_money(tax_raw)
+    tax = parse_money(tax_raw) if tax_raw else None
 
     currency = "INR" if re.search(r"\bRs\.?\b|\bINR\b|\bGST\b", text, re.IGNORECASE) else None
 
@@ -111,3 +107,8 @@ def extract(req: ExtractRequest):
         "tax": tax,
         "currency": currency,
     }
+
+# Needed so the app can run with `python main.py` on beginner-friendly hosts
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
