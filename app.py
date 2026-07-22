@@ -7,16 +7,21 @@ import re
 
 app = FastAPI()
 
+# CORS: allow_credentials MUST be False when allow_origins is "*"
+# (allow_origins=["*"] + allow_credentials=True is invalid per the CORS
+# spec and browsers/Workers will reject the response.)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,   # FIXED: was True, which is invalid with allow_origins=["*"]
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
 class ExtractRequest(BaseModel):
     invoice_text: str
+
 
 class ExtractResponse(BaseModel):
     invoice_no: Optional[str] = None
@@ -26,6 +31,7 @@ class ExtractResponse(BaseModel):
     tax: Optional[float] = None
     currency: Optional[str] = None
 
+
 def clean_text(value):
     if value is None:
         return None
@@ -33,21 +39,25 @@ def clean_text(value):
     value = re.sub(r"\s+", " ", value)
     return value if value else None
 
+
 def parse_date_field(text):
     patterns = [
-        r"Date\s*[:\-]?\s*([A-Za-z0-9,\-/\. ]+)",
         r"Invoice Date\s*[:\-]?\s*([A-Za-z0-9,\-/\. ]+)",
+        r"Date\s*[:\-]?\s*([A-Za-z0-9,\-/\. ]+)",
     ]
     for pattern in patterns:
         m = re.search(pattern, text, re.IGNORECASE)
         if m:
             raw = m.group(1).strip()
+            # cut off at newline-ish trailing junk that regex may over-grab
+            raw = raw.splitlines()[0]
             try:
                 dt = parser.parse(raw, dayfirst=True, fuzzy=True)
                 return dt.strftime("%Y-%m-%d")
             except Exception:
-                pass
+                continue
     return None
+
 
 def parse_money(raw):
     if raw is None:
@@ -61,12 +71,19 @@ def parse_money(raw):
     except Exception:
         return None
 
+
 def find_first_match(text, patterns):
     for pattern in patterns:
         m = re.search(pattern, text, re.IGNORECASE)
         if m:
             return clean_text(m.group(1))
     return None
+
+
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "POST invoice_text to /extract"}
+
 
 @app.post("/extract", response_model=ExtractResponse)
 def extract(req: ExtractRequest):
@@ -91,8 +108,12 @@ def extract(req: ExtractRequest):
     amount_raw = find_first_match(text, amount_patterns)
     amount = parse_money(amount_raw) if amount_raw else None
 
+    # GST/VAT is checked before the generic "Tax" pattern so that phrases
+    # like "Amount Before Tax" (which contain the substring "Tax:") don't
+    # get matched instead of the real tax-amount line.
     tax_patterns = [
-        r"(?:GST(?:\s*\(\d+%\))?|Tax|VAT)\s*[:\-]?\s*(?:Rs\.?|INR)?\s*([\d,]+\.\d{2})",
+        r"(?:GST(?:\s*\(\d+%\))?|VAT)\s*[:\-]?\s*(?:Rs\.?|INR)?\s*([\d,]+\.\d{2})",
+        r"(?<!Before\s)(?<!Before)\bTax\s*[:\-]?\s*(?:Rs\.?|INR)?\s*([\d,]+\.\d{2})",
     ]
     tax_raw = find_first_match(text, tax_patterns)
     tax = parse_money(tax_raw) if tax_raw else None
@@ -108,7 +129,7 @@ def extract(req: ExtractRequest):
         "currency": currency,
     }
 
-# Needed so the app can run with `python main.py` on beginner-friendly hosts
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
